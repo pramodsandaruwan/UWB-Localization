@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Train using CSV dataset files -->
+	<node
+        pkg="state_estimator"
+        type="train.py"
+        name="Train_node"
+        output="screen"
+        respawn="false">
+    </node>
+</launch>
