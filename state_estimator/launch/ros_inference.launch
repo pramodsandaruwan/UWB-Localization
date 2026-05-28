@@ -7,7 +7,7 @@
 
 	<node
         pkg="state_estimator"
-        type="inference.py"
+        type="ros_inference.py"
         name="Inference_node"
         output="screen"
         respawn="false">
