@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<launch>	
+	<!--ArduPilot-->
+    	<!--include file="$(find mavros)/launch/apm2.launch" /-->
+
+	<!-- Our node to control the drone -->
+	<!--node pkg="offboard_py" type="offb_node.py" name="offb_node_py" output="screen" /-->
+	<node pkg="offboard_py" type="gt_pub.py" name="GT_node" output="screen" />
+	<node pkg="offboard_py" type="imu_pub.py" name="IMU_node" output="screen" />
+	<node pkg="offboard_py" type="uwb_pub.py" name="UWB_node" output="screen" />
+	<node pkg="offboard_py" type="main.py" name="Main_node" output="screen" />
+	<node pkg="offboard_py" type="plot_node.py" name="Plot_node" output="screen" />
+</launch>
