@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<launch>
+
+    <include file="$(find mavros)/launch/apm.launch">
+        <!-- <arg name="fcu_url" value="serial:///dev/ttyACM0:57600" /> -->
+    </include>
+
+    <node
+        pkg="state_estimator"
+        type="data_logger.py"
+        name="logger_node"
+        output="screen"
+        respawn="false">
+
+        <!-- Serial port parameters forwarded to the node (~port, ~baud) -->
+        <param name="port" value="/dev/ttyUSB0" />
+        <param name="baud" value="115200" />
+
+    </node>
+
+</launch>
