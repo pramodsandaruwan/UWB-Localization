@@ -15,10 +15,10 @@ The objective of this thesis is to design, implement, and evaluate a real-time t
 ## 🛠️ Installation and Setup
 
 ### 1. Install ROS Noetic
-Follow the official guide for your Ubuntu system: [ROS Noetic Installation for Ubuntu](https://wiki.ros.org/noetic/Installation/Ubuntu).
+Follow the official guide for Ubuntu system: [ROS Noetic Installation for Ubuntu](https://wiki.ros.org/noetic/Installation/Ubuntu)
 
 ### 2. Create and Build Catkin Workspace
-Open your terminal and run the following commands to set up your workspace:
+Open  terminal and run the following commands to set up your workspace:
 
 ```bash
 # Create the workspace directory
@@ -34,16 +34,15 @@ source devel/setup.bash
 ```
 
 ## install mavros
-Binary installation (deb)
 
-ROS repository has binary packages for Ubuntu x86, amd64 (x86_64) and armhf (ARMv7). Kinetic also support Debian Jessie amd64 and arm64 (ARMv8).
+Follow the official guide for Ubuntu system: [ROS Noetic - mavros](https://wiki.ros.org/mavros)
 
-Just use apt-get for installation:
+Use apt-get for installation:
 ```bash
 sudo apt-get install ros-kinetic-mavros ros-kinetic-mavros-extras
 ```
 
-Then install GeographicLib datasets by running the install_geographiclib_datasets.sh script:
+Install GeographicLib datasets by running the install_geographiclib_datasets.sh script:
 
 ```bash
 wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/install_geographiclib_datasets.sh
