@@ -41,10 +41,26 @@ ROS repository has binary packages for Ubuntu x86, amd64 (x86_64) and armhf (ARM
 Just use apt-get for installation:
 ```bash
 sudo apt-get install ros-kinetic-mavros ros-kinetic-mavros-extras
+```
 
 Then install GeographicLib datasets by running the install_geographiclib_datasets.sh script:
 
+```bash
 wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/install_geographiclib_datasets.sh
 ./install_geographiclib_datasets.sh
 
 ```
+## Methodology
+![Methodology](method.jpg)
+
+## Temporal Convolutional Network Module
+![TCN](tcn.jpg)
+
+## Hybrid UKF-TCN Architecture
+![UKF](UKF.jpg)
+
+## Experimental Results 
+![SIM Test](sim_test.jpg)
+
+## Experimental Results - Riga
+![Riga Test](riga_test.jpg)
