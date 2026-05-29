@@ -5,16 +5,27 @@
         <!-- <arg name="fcu_url" value="serial:///dev/ttyACM0:57600" /> -->
     </include>
 
-	<node
+    <!-- UWB serial reader — publishes raw ranges to /uwb/raw -->
+    <node
         pkg="state_estimator"
-        type="ros_inference.py"
-        name="Inference_node"
+        type="uwb_serial_publisher.py"
+        name="uwb_serial_publisher"
         output="screen"
-        respawn="false">
+        respawn="true">
 
-        <!-- Serial port parameters forwarded to the node (~port, ~baud) -->
-        <param name="port" value="/dev/ttyUSB0" />
-        <param name="baud" value="115200" />
+        <param name="port"  value="/dev/ttyUSB0" />
+        <param name="baud"  value="115200" />
+        <param name="topic" value="/uwb/raw" />
 
     </node>
+
+    <!-- TCN inference + UKF fusion -->
+    <node
+        pkg="state_estimator"
+        type="ros_inference.py"
+        name="inference_node"
+        output="screen"
+        respawn="false">
+    </node>
+
 </launch>

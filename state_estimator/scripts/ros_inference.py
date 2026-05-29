@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
 
+import threading
 import numpy as np
-import pandas as pd
 import torch
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+import rospy
+from sensor_msgs.msg import Imu
+from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import String as StringMsg
+
 from model import TrustTCN, build_features
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 
 ANCHORS = [100, 101, 102, 103]
 
@@ -16,565 +27,324 @@ ANCHOR_POS = {
     103: np.array([11.62, 13.06, 1.19]),
 }
 
-WINDOW = 25
+WINDOW      = 25
+UWB_SYNC_DT = 0.2   # seconds — max age of a UWB reading to be used at an IMU tick
+
+# ---------------------------------------------------------------------------
+# UKF 
+# ---------------------------------------------------------------------------
 
 class UKF:
 
     def __init__(self, dt=0.1):
-
         self.dt = dt
-
-        self.x = np.zeros(6)
-
-        self.P = np.eye(6)
-
-        self.Q = np.diag([
-            0.01, 0.01, 0.01,
-            0.1, 0.1, 0.1
-        ])
-
-        self.R = np.eye(3) * 0.8
+        self.x  = np.zeros(6)
+        self.P  = np.eye(6)
+        self.Q  = np.diag([0.01, 0.01, 0.01, 0.1, 0.1, 0.1])
+        self.R  = np.eye(3) * 0.8
 
     def set_measurement_noise(self, weights):
-
-        trust = np.max(weights)
-
+        trust       = np.max(weights)
         uncertainty = 1.0 - trust
-
-        base = 0.3
-        scale = 2.0
-
-        r_val = base + scale * uncertainty
-
-        self.R = np.eye(3) * r_val
+        self.R      = np.eye(3) * (0.3 + 2.0 * uncertainty)
 
     def predict(self, acc):
-
         dt = self.dt
-
-        F = np.eye(6)
-
-        F[0, 3] = dt
-        F[1, 4] = dt
-        F[2, 5] = dt
-
-        B = np.zeros((6, 3))
-
-        B[3, 0] = dt
-        B[4, 1] = dt
-        B[5, 2] = dt
-
+        F  = np.eye(6); F[0, 3] = dt; F[1, 4] = dt; F[2, 5] = dt
+        B  = np.zeros((6, 3)); B[3, 0] = dt; B[4, 1] = dt; B[5, 2] = dt
         self.x[3:] *= 0.98
-
         self.x = F @ self.x + B @ acc
-
         self.P = F @ self.P @ F.T + self.Q
 
     def update(self, z):
-
-        H = np.zeros((3, 6))
-
-        H[0, 0] = 1
-        H[1, 1] = 1
-        H[2, 2] = 1
-
+        H = np.zeros((3, 6)); H[0, 0] = 1; H[1, 1] = 1; H[2, 2] = 1
         y = z - H @ self.x
-
         S = H @ self.P @ H.T + self.R
-
         K = self.P @ H.T @ np.linalg.inv(S)
-
         self.x = self.x + K @ y
-
         self.P = (np.eye(6) - K @ H) @ self.P
 
     def get_pos(self):
+        return self.x[:3].copy()
 
-        return self.x[:3]
+
+# ---------------------------------------------------------------------------
+# Trilateration helpers 
+# ---------------------------------------------------------------------------
 
 def raw_trilat(uwb):
-
-    pts = []
-    dists = []
-
+    pts, dists = [], []
     for m in ANCHORS:
-
         if m not in uwb:
             continue
-
         r = uwb[m]["range"]
-
         if r <= 0 or r > 50:
             continue
-
-        noise = np.random.normal(0, 0.0005 * r)
-
-        r_noisy = r + noise
-
-        pts.append(ANCHOR_POS[m])
-
-        dists.append(r_noisy)
-
+        r_noisy = r + np.random.normal(0, 0.0005 * r)
+        pts.append(ANCHOR_POS[m]); dists.append(r_noisy)
     if len(pts) < 3:
         return None
-
-    pts = np.array(pts)
-
-    dists = np.array(dists)
-
-    A = []
-    b = []
-
-    p1 = pts[0]
-
-    d1 = dists[0]
-
+    pts   = np.array(pts); dists = np.array(dists)
+    A, b  = [], []
+    p1, d1 = pts[0], dists[0]
     for i in range(1, len(pts)):
-
-        pi = pts[i]
-
-        di = dists[i]
-
-        A.append(2 * (pi - p1))
-
-        b.append(
-            d1**2
-            - di**2
-            - np.sum(p1**2)
-            + np.sum(pi**2)
-        )
-
-    A = np.array(A)
-
-    b = np.array(b)
-
+        A.append(2 * (pts[i] - p1))
+        b.append(d1**2 - dists[i]**2 - np.dot(p1, p1) + np.dot(pts[i], pts[i]))
     try:
-
-        sol = np.linalg.lstsq(
-            A,
-            b,
-            rcond=None
-        )[0]
-
-        return sol
-
-    except:
-
+        return np.linalg.lstsq(np.array(A), np.array(b), rcond=None)[0]
+    except Exception:
         return None
+
 
 def weighted_trilat(uwb, weights):
-
-    pts = []
-    dists = []
-    wts = []
-
-    weights = np.array(weights)
-
-    weights = np.clip(weights, 0.05, None)
-
-    weights = weights / (
-        np.sum(weights) + 1e-8
-    )
-
+    pts, dists, wts = [], [], []
+    weights = np.clip(np.array(weights), 0.05, None)
+    weights = weights / (weights.sum() + 1e-8)
     for i, m in enumerate(ANCHORS):
-
         if m not in uwb:
             continue
-
-        pts.append(ANCHOR_POS[m])
-
-        dists.append(uwb[m]["range"])
-
-        wts.append(weights[i])
-
+        pts.append(ANCHOR_POS[m]); dists.append(uwb[m]["range"]); wts.append(weights[i])
     if len(pts) < 3:
         return None
-
-    pts = np.array(pts)
-
-    dists = np.array(dists)
-
-    wts = np.array(wts)
-
-    A = []
-    b = []
-
-    p1 = pts[0]
-
-    d1 = dists[0]
-
+    pts  = np.array(pts); dists = np.array(dists); wts = np.array(wts)
+    A, b = [], []
+    p1, d1 = pts[0], dists[0]
     for i in range(1, len(pts)):
-
-        pi = pts[i]
-
-        di = dists[i]
-
         wi = wts[i]
-
-        A.append(
-            wi * 2 * (pi - p1)
-        )
-
-        b.append(
-            wi * (
-                d1**2
-                - di**2
-                - np.sum(p1**2)
-                + np.sum(pi**2)
-            )
-        )
-
-    A = np.array(A)
-
-    b = np.array(b)
-
+        A.append(wi * 2 * (pts[i] - p1))
+        b.append(wi * (d1**2 - dists[i]**2 - np.dot(p1, p1) + np.dot(pts[i], pts[i])))
     try:
-
-        sol = np.linalg.lstsq(
-            A,
-            b,
-            rcond=None
-        )[0]
-
-        return sol
-
-    except:
-
+        return np.linalg.lstsq(np.array(A), np.array(b), rcond=None)[0]
+    except Exception:
         return None
 
-def nearest(df, t):
 
-    valid = df[df["time"].notna()].copy()
+# ---------------------------------------------------------------------------
+# Main node
+# ---------------------------------------------------------------------------
 
-    if len(valid) == 0:
-        return None
+class InferenceNode:
 
-    diff = (valid["time"] - t).abs()
+    def __init__(self):
+        rospy.init_node("trust_tcn_inference")
 
-    diff = diff.dropna()
+        # --- load model ---
+        checkpoint  = torch.load("trust_tcn.pth", map_location="cpu")
+        self.model  = TrustTCN(checkpoint["input_size"])
+        self.model.load_state_dict(checkpoint["model_state"])
+        self.model.eval()
 
-    if len(diff) == 0:
-        return None
+        self.ukf    = UKF(dt=0.1)
+        self.buffer = [] 
 
-    idx = diff.idxmin()
+        # Thread-safe UWB store  {module_id: {"range": float, "time": float}}
+        self._uwb_lock = threading.Lock()
+        self._uwb      = {}
 
-    return valid.loc[idx]
+        # Thread-safe GT store   {"pos": np.array, "time": float}
+        self._gt_lock  = threading.Lock()
+        self._gt       = None
 
-def main():
+        # Results accumulation
+        self.gt_list    = []
+        self.raw_list   = []
+        self.tcn_list   = []
+        self.ukf_list   = []
+        self.time_list  = []
+        self.trust_hist = {a: [] for a in ANCHORS}
 
-    imu = pd.read_csv("imu.csv")
+        # --- subscribers ---
+        rospy.Subscriber("/mavros/imu/data",            Imu,         self._imu_cb)
+        rospy.Subscriber("/mavros/local_position/pose", PoseStamped, self._gt_cb)
+        rospy.Subscriber("/uwb/raw",                    StringMsg,   self._uwb_cb)
 
-    uwb = pd.read_csv("uwb.csv")
+        rospy.loginfo("InferenceNode ready")
 
-    gt = pd.read_csv("gt.csv")
+    # -----------------------------------------------------------------------
+    # Subscribers
+    # -----------------------------------------------------------------------
 
-    imu = imu.dropna(
-        subset=["timestamp_sec"]
-    )
-
-    uwb = uwb.dropna(
-        subset=["timestamp_sec"]
-    )
-
-    gt = gt.dropna(
-        subset=["timestamp_sec"]
-    )
-
-    imu["time"] = imu["timestamp_sec"]
-
-    uwb["time"] = uwb["timestamp_sec"]
-
-    gt["time"] = gt["timestamp_sec"]
-
-    checkpoint = torch.load(
-        "trust_tcn.pth",
-        map_location="cpu"
-    )
-
-    model = TrustTCN(
-        checkpoint["input_size"]
-    )
-
-    model.load_state_dict(
-        checkpoint["model_state"]
-    )
-
-    model.eval()
-
-    buffer = []
-
-    gt_list = []
-
-    raw_list = []
-
-    tcn_list = []
-
-    ukf_list = []
-
-    trust_history = {
-        a: [] for a in ANCHORS
-    }
-
-    time_list = []
-
-    ukf = UKF(dt=0.1)
-
-    for _, row in imu.iterrows():
-
-        t = row["time"]
-
-        gt_row = nearest(gt, t)
-
-        if gt_row is None:
-            continue
-
-        gt_pos = np.array([
-            gt_row["gt_x"],
-            gt_row["gt_y"],
-            gt_row["gt_z"]
+    def _gt_cb(self, msg):
+        t   = msg.header.stamp.to_sec()
+        pos = np.array([
+            msg.pose.position.x,
+            msg.pose.position.y,
+            msg.pose.position.z,
         ])
+        with self._gt_lock:
+            self._gt = {"pos": pos, "time": t}
 
-        uwb_snap = {}
+    def _uwb_cb(self, msg):
+        """Parse 'module_id,range_m,self_range_error' published by uwb_serial_publisher."""
+        try:
+            parts = msg.data.strip().split(",")
+            if len(parts) != 3:
+                rospy.logwarn_throttle(5, f"Unexpected UWB message: '{msg.data}'")
+                return
+            mid = int(parts[0])
+            rng = float(parts[1])
+            # self_range_err available as float(parts[2]) if needed in future
+            t_now = rospy.Time.now().to_sec()
+            with self._uwb_lock:
+                self._uwb[mid] = {"range": rng, "time": t_now}
+        except ValueError as e:
+            rospy.logwarn_throttle(5, f"UWB parse error: {e} — '{msg.data}'")
 
-        subset = uwb[
-            abs(uwb["time"] - t) < 0.2
-        ]
+    def _imu_cb(self, msg):
+        """Main processing tick — driven by IMU messages."""
+        t = msg.header.stamp.to_sec()
 
-        for _, r in subset.iterrows():
+        # --- ground truth snapshot ---
+        with self._gt_lock:
+            gt_snap = self._gt
+        if gt_snap is None:
+            return                         # no GT yet — skip
 
-            uwb_snap[
-                int(r["module_id"])
-            ] = {
-                "range": float(r["range_m"])
+        gt_pos = gt_snap["pos"]
+
+        # --- UWB snapshot (readings within UWB_SYNC_DT) ---
+        with self._uwb_lock:
+            uwb_snap = {
+                mid: {"range": d["range"]}
+                for mid, d in self._uwb.items()
+                if abs(d["time"] - t) < UWB_SYNC_DT
             }
 
-        imu_vec = row[
-            [
-                "ang_vel_x",
-                "ang_vel_y",
-                "ang_vel_z",
-                "lin_acc_x",
-                "lin_acc_y",
-                "lin_acc_z",
-                "quat_x",
-                "quat_y",
-                "quat_z",
-                "quat_w"
-            ]
-        ].values.astype(float)
+        # --- IMU vector ---
+        imu_vec = np.array([
+            msg.angular_velocity.x,    msg.angular_velocity.y,    msg.angular_velocity.z,
+            msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z,
+            msg.orientation.x,         msg.orientation.y,
+            msg.orientation.z,         msg.orientation.w,
+        ], dtype=float)
 
         acc = np.array([
-            row["lin_acc_x"],
-            row["lin_acc_y"],
-            row["lin_acc_z"] - 9.81
+            msg.linear_acceleration.x,
+            msg.linear_acceleration.y,
+            msg.linear_acceleration.z - 9.81,
         ])
 
-        feat = build_features(
-            imu_vec,
-            uwb_snap
-        )
+        # --- build feature vector & slide window ---
+        feat = build_features(imu_vec, uwb_snap)
+        self.buffer.append(feat)
+        self.ukf.predict(acc)
 
-        buffer.append(feat)
-
-        ukf.predict(acc)
-
-        if len(buffer) < WINDOW:
-            continue
+        if len(self.buffer) < WINDOW:
+            return
 
         x = torch.tensor(
-            np.array(
-                buffer[-WINDOW:],
-                dtype=np.float32
-            )
+            np.array(self.buffer[-WINDOW:], dtype=np.float32)
         ).unsqueeze(0)
 
         with torch.no_grad():
+            uwb_t, _ = self.model(x)
+            weights   = uwb_t.squeeze(0).cpu().numpy()
 
-            uwb_t, _ = model(x)
-
-            weights = (
-                uwb_t
-                .squeeze(0)
-                .cpu()
-                .numpy()
-            )
-
+        # --- record trust history ---
         for i, a in enumerate(ANCHORS):
+            self.trust_hist[a].append(weights[i])
 
-            trust_history[a].append(
-                weights[i]
-            )
+        # --- localization ---
+        self.ukf.set_measurement_noise(weights)
 
-        time_list.append(t)
-
-        ukf.set_measurement_noise(
-            weights
-        )
-
-        tcn_est = weighted_trilat(
-            uwb_snap,
-            weights
-        )
-
+        tcn_est = weighted_trilat(uwb_snap, weights)
         if tcn_est is not None:
+            self.ukf.update(tcn_est)
 
-            ukf.update(tcn_est)
+        raw_est = raw_trilat(uwb_snap)
 
-        ukf_list.append(
-            ukf.get_pos()
-        )
-
-        raw_est = raw_trilat(
-            uwb_snap
-        )
+        # --- store results ---
+        self.time_list.append(t)
+        self.gt_list.append(gt_pos)
+        self.ukf_list.append(self.ukf.get_pos())
 
         if raw_est is not None:
-
-            raw_list.append(raw_est)
+            self.raw_list.append(raw_est)
 
         if tcn_est is not None:
+            self.tcn_list.append(tcn_est)
 
-            tcn_list.append(tcn_est)
+        # Trim oldest buffer entry
+        self.buffer.pop(0)
 
-        gt_list.append(gt_pos)
+    # -----------------------------------------------------------------------
+    # Plotting — called once on shutdown
+    # -----------------------------------------------------------------------
 
-        buffer.pop(0)
+    def plot_results(self):
+        rospy.loginfo("Generating plots …")
 
-    raw = np.array(raw_list)
+        raw = np.array(self.raw_list)
+        tcn = np.array(self.tcn_list)
+        gt  = np.array(self.gt_list)
+        ukf = np.array(self.ukf_list)
 
-    tcn = np.array(tcn_list)
+        if any(len(a) == 0 for a in (raw, tcn, gt, ukf)):
+            rospy.logwarn("Not enough data to plot — did the node run long enough?")
+            return
 
-    gt = np.array(gt_list)
+        n = min(len(raw), len(tcn), len(gt), len(ukf))
+        raw, tcn, gt, ukf = raw[:n], tcn[:n], gt[:n], ukf[:n]
 
-    ukf = np.array(ukf_list)
+        # --- trajectory ---
+        fig, ax = plt.subplots()
+        ax.plot(gt[:, 0],  gt[:, 1],  label="GT",          linewidth=1.5)
+        ax.plot(raw[:, 0], raw[:, 1], label="Raw UWB",      color="tab:orange", alpha=0.6)
+        ax.plot(tcn[:, 0], tcn[:, 1], label="TCN Weighted", color="tab:green",  alpha=0.7)
+        ax.plot(ukf[:, 0], ukf[:, 1], label="UKF Fusion",   color="tab:red",    linewidth=1.5)
+        ax.set_title("Final Localization System"); ax.legend(); ax.grid()
+        fig.savefig("trajectory.png", dpi=150)
+        rospy.loginfo("Saved trajectory.png")
 
-    n = min(
-        len(raw),
-        len(tcn),
-        len(gt),
-        len(ukf)
-    )
+        # --- error ---
+        raw_err = np.linalg.norm(raw - gt, axis=1)
+        tcn_err = np.linalg.norm(tcn - gt, axis=1)
+        ukf_err = np.linalg.norm(ukf - gt, axis=1)
 
-    raw = raw[:n]
+        fig2, ax2 = plt.subplots()
+        ax2.plot(raw_err, label="Raw UWB",      color="tab:orange")
+        ax2.plot(tcn_err, label="TCN Weighted",  color="tab:green")
+        ax2.plot(ukf_err, label="UKF Fusion",    color="tab:red")
+        ax2.set_title("Error Comparison"); ax2.legend(); ax2.grid()
+        fig2.savefig("error.png", dpi=150)
+        rospy.loginfo("Saved error.png")
 
-    tcn = tcn[:n]
+        print(f"\n=== Mean positioning error ===")
+        print(f"  Raw UWB      : {np.mean(raw_err):.4f} m")
+        print(f"  TCN Weighted : {np.mean(tcn_err):.4f} m")
+        print(f"  UKF Fusion   : {np.mean(ukf_err):.4f} m")
 
-    gt = gt[:n]
+        # --- anchor trust ---
+        t_axis = self.time_list[: min(len(self.time_list),
+                                      max(len(v) for v in self.trust_hist.values()))]
+        fig3, ax3 = plt.subplots()
+        for a in ANCHORS:
+            h = self.trust_hist[a]
+            ax3.plot(t_axis[:len(h)], h, label=f"A{a}")
+        ax3.set_title("TCN Anchor Trust Evolution"); ax3.legend(); ax3.grid()
+        fig3.savefig("trust.png", dpi=150)
+        rospy.loginfo("Saved trust.png")
 
-    ukf = ukf[:n]
+        # Optionally show all figures interactively if a display is available
+        try:
+            plt.show()
+        except Exception:
+            pass
 
-    plt.figure()
 
-    plt.plot(
-        gt[:, 0],
-        gt[:, 1],
-        label="GT",
-        linewidth=1
-    )
-
-    plt.plot(
-        raw[:, 0],
-        raw[:, 1],
-        label="Raw UWB",
-        color="tab:orange",
-        alpha=0.6
-    )
-
-    plt.plot(
-        tcn[:, 0],
-        tcn[:, 1],
-        label="TCN Weighted",
-        color="tab:green",
-        alpha=0.7
-    )
-
-    plt.plot(
-        ukf[:, 0],
-        ukf[:, 1],
-        label="UKF Fusion",
-        color="tab:red",
-        linewidth=1
-    )
-
-    plt.title(
-        "Final Localization System"
-    )
-
-    plt.legend()
-
-    plt.grid()
-
-    plt.show()
-
-    raw_err = np.linalg.norm(
-        raw - gt,
-        axis=1
-    )
-
-    tcn_err = np.linalg.norm(
-        tcn - gt,
-        axis=1
-    )
-
-    ukf_err = np.linalg.norm(
-        ukf - gt,
-        axis=1
-    )
-
-    plt.figure()
-
-    plt.plot(
-        raw_err,
-        label="Raw UWB",
-        color="tab:orange"
-    )
-
-    plt.plot(
-        tcn_err,
-        label="TCN Weighted",
-        color="tab:green"
-    )
-
-    plt.plot(
-        ukf_err,
-        label="UKF Fusion",
-        color="tab:red"
-    )
-
-    plt.title("Error Comparison")
-
-    plt.legend()
-
-    plt.grid()
-
-    plt.show()
-
-    print("RAW:", np.mean(raw_err))
-
-    print("TCN:", np.mean(tcn_err))
-
-    print("UKF:", np.mean(ukf_err))
-
-    plt.figure()
-
-    for a in ANCHORS:
-
-        plt.plot(
-            time_list[:len(trust_history[a])],
-            trust_history[a],
-            label=f"A{a}"
-        )
-
-    plt.title(
-        "TCN Anchor Trust Evolution"
-    )
-
-    plt.legend()
-
-    plt.grid()
-
-    plt.show()
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
 
-    main()
+    node = InferenceNode()
+
+    try:
+        rospy.spin()
+
+    except rospy.ROSInterruptException:
+        pass
+
+    finally:
+        node.plot_results()
