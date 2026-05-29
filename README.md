@@ -51,16 +51,16 @@ wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/inst
 
 ```
 ## Methodology
-![Methodology](method.jpg)
+![Methodology](images/method.jpg)
 
 ## Temporal Convolutional Network Module
-![TCN](tcn.jpg)
+![TCN](images/tcn.jpg)
 
 ## Hybrid UKF-TCN Architecture
-![UKF](UKF.jpg)
+![UKF](images/UKF.jpg)
 
 ## Experimental Results 
-![SIM Test](sim_test.jpg)
+![SIM Test](images/sim_test.jpg)
 
 ## Experimental Results - Riga
-![Riga Test](riga_test.jpg)
+![Riga Test](images/riga_test.jpg)
