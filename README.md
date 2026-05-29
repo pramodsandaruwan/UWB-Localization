@@ -33,7 +33,7 @@ source devel/setup.bash
 
 ```
 
-## install mavros
+### 3. Install mavros
 
 Follow the official guide for Ubuntu system: [ROS Noetic - mavros](https://wiki.ros.org/mavros)
 
