@@ -79,10 +79,8 @@ def raw_trilat(uwb):
         r = uwb[m]["range"]
         if r <= 0 or r > 50:
             continue
-        noise = np.random.normal(0, 0.0005 * r)
-        r_noisy = r + noise
         pts.append(ANCHOR_POS[m])
-        dists.append(r_noisy)
+        dists.append(r)
 
     if len(pts) < 3:
         return None

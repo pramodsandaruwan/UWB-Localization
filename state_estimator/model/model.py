@@ -31,7 +31,7 @@ class TrustTCN(nn.Module):
         )
 
 
-# SAME FEATURE FUNCTION (must match training exactly)
+# FEATURE FUNCTION
 def build_features(imu, uwb, anchors=[100,101,102,103]):
 
     gyro = imu[0:3] / 10.0

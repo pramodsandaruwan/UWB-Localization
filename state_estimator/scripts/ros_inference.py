@@ -14,9 +14,7 @@ from std_msgs.msg import String as StringMsg
 
 from model import TrustTCN, build_features
 
-# ---------------------------------------------------------------------------
 # Configuration
-# ---------------------------------------------------------------------------
 
 ANCHORS = [100, 101, 102, 103]
 
@@ -28,11 +26,9 @@ ANCHOR_POS = {
 }
 
 WINDOW      = 25
-UWB_SYNC_DT = 0.2   # seconds — max age of a UWB reading to be used at an IMU tick
+UWB_SYNC_DT = 0.2  
 
-# ---------------------------------------------------------------------------
 # UKF 
-# ---------------------------------------------------------------------------
 
 class UKF:
 
@@ -68,9 +64,7 @@ class UKF:
         return self.x[:3].copy()
 
 
-# ---------------------------------------------------------------------------
 # Trilateration helpers 
-# ---------------------------------------------------------------------------
 
 def raw_trilat(uwb):
     pts, dists = [], []
@@ -80,8 +74,7 @@ def raw_trilat(uwb):
         r = uwb[m]["range"]
         if r <= 0 or r > 50:
             continue
-        r_noisy = r + np.random.normal(0, 0.0005 * r)
-        pts.append(ANCHOR_POS[m]); dists.append(r_noisy)
+        pts.append(ANCHOR_POS[m]); dists.append(r)
     if len(pts) < 3:
         return None
     pts   = np.array(pts); dists = np.array(dists)
@@ -118,17 +111,14 @@ def weighted_trilat(uwb, weights):
     except Exception:
         return None
 
-
-# ---------------------------------------------------------------------------
 # Main node
-# ---------------------------------------------------------------------------
 
 class InferenceNode:
 
     def __init__(self):
         rospy.init_node("trust_tcn_inference")
 
-        # --- load model ---
+        # load model 
         checkpoint  = torch.load("trust_tcn.pth", map_location="cpu")
         self.model  = TrustTCN(checkpoint["input_size"])
         self.model.load_state_dict(checkpoint["model_state"])
@@ -145,7 +135,6 @@ class InferenceNode:
         self._gt_lock  = threading.Lock()
         self._gt       = None
 
-        # Results accumulation
         self.gt_list    = []
         self.raw_list   = []
         self.tcn_list   = []
@@ -153,16 +142,13 @@ class InferenceNode:
         self.time_list  = []
         self.trust_hist = {a: [] for a in ANCHORS}
 
-        # --- subscribers ---
         rospy.Subscriber("/mavros/imu/data",            Imu,         self._imu_cb)
         rospy.Subscriber("/mavros/local_position/pose", PoseStamped, self._gt_cb)
         rospy.Subscriber("/uwb/raw",                    StringMsg,   self._uwb_cb)
 
         rospy.loginfo("InferenceNode ready")
 
-    # -----------------------------------------------------------------------
     # Subscribers
-    # -----------------------------------------------------------------------
 
     def _gt_cb(self, msg):
         t   = msg.header.stamp.to_sec()
@@ -175,7 +161,6 @@ class InferenceNode:
             self._gt = {"pos": pos, "time": t}
 
     def _uwb_cb(self, msg):
-        """Parse 'module_id,range_m,self_range_error' published by uwb_serial_publisher."""
         try:
             parts = msg.data.strip().split(",")
             if len(parts) != 3:
@@ -183,7 +168,6 @@ class InferenceNode:
                 return
             mid = int(parts[0])
             rng = float(parts[1])
-            # self_range_err available as float(parts[2]) if needed in future
             t_now = rospy.Time.now().to_sec()
             with self._uwb_lock:
                 self._uwb[mid] = {"range": rng, "time": t_now}
@@ -191,18 +175,17 @@ class InferenceNode:
             rospy.logwarn_throttle(5, f"UWB parse error: {e} — '{msg.data}'")
 
     def _imu_cb(self, msg):
-        """Main processing tick — driven by IMU messages."""
         t = msg.header.stamp.to_sec()
 
-        # --- ground truth snapshot ---
+        # ground truth snapshot 
         with self._gt_lock:
             gt_snap = self._gt
         if gt_snap is None:
-            return                         # no GT yet — skip
+            return 
 
         gt_pos = gt_snap["pos"]
 
-        # --- UWB snapshot (readings within UWB_SYNC_DT) ---
+        # UWB snapshot 
         with self._uwb_lock:
             uwb_snap = {
                 mid: {"range": d["range"]}
@@ -210,7 +193,7 @@ class InferenceNode:
                 if abs(d["time"] - t) < UWB_SYNC_DT
             }
 
-        # --- IMU vector ---
+        # IMU vector
         imu_vec = np.array([
             msg.angular_velocity.x,    msg.angular_velocity.y,    msg.angular_velocity.z,
             msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z,
@@ -224,7 +207,7 @@ class InferenceNode:
             msg.linear_acceleration.z - 9.81,
         ])
 
-        # --- build feature vector & slide window ---
+        # build feature vector & slide window 
         feat = build_features(imu_vec, uwb_snap)
         self.buffer.append(feat)
         self.ukf.predict(acc)
@@ -240,11 +223,11 @@ class InferenceNode:
             uwb_t, _ = self.model(x)
             weights   = uwb_t.squeeze(0).cpu().numpy()
 
-        # --- record trust history ---
+        # record trust history 
         for i, a in enumerate(ANCHORS):
             self.trust_hist[a].append(weights[i])
 
-        # --- localization ---
+        # localization 
         self.ukf.set_measurement_noise(weights)
 
         tcn_est = weighted_trilat(uwb_snap, weights)
@@ -253,7 +236,7 @@ class InferenceNode:
 
         raw_est = raw_trilat(uwb_snap)
 
-        # --- store results ---
+        # store results
         self.time_list.append(t)
         self.gt_list.append(gt_pos)
         self.ukf_list.append(self.ukf.get_pos())
@@ -267,9 +250,7 @@ class InferenceNode:
         # Trim oldest buffer entry
         self.buffer.pop(0)
 
-    # -----------------------------------------------------------------------
     # Plotting — called once on shutdown
-    # -----------------------------------------------------------------------
 
     def plot_results(self):
         rospy.loginfo("Generating plots …")
@@ -286,7 +267,7 @@ class InferenceNode:
         n = min(len(raw), len(tcn), len(gt), len(ukf))
         raw, tcn, gt, ukf = raw[:n], tcn[:n], gt[:n], ukf[:n]
 
-        # --- trajectory ---
+        # trajectory 
         fig, ax = plt.subplots()
         ax.plot(gt[:, 0],  gt[:, 1],  label="GT",          linewidth=1.5)
         ax.plot(raw[:, 0], raw[:, 1], label="Raw UWB",      color="tab:orange", alpha=0.6)
@@ -296,7 +277,7 @@ class InferenceNode:
         fig.savefig("trajectory.png", dpi=150)
         rospy.loginfo("Saved trajectory.png")
 
-        # --- error ---
+        # error 
         raw_err = np.linalg.norm(raw - gt, axis=1)
         tcn_err = np.linalg.norm(tcn - gt, axis=1)
         ukf_err = np.linalg.norm(ukf - gt, axis=1)
@@ -314,7 +295,7 @@ class InferenceNode:
         print(f"  TCN Weighted : {np.mean(tcn_err):.4f} m")
         print(f"  UKF Fusion   : {np.mean(ukf_err):.4f} m")
 
-        # --- anchor trust ---
+        # anchor trust 
         t_axis = self.time_list[: min(len(self.time_list),
                                       max(len(v) for v in self.trust_hist.values()))]
         fig3, ax3 = plt.subplots()
@@ -325,16 +306,13 @@ class InferenceNode:
         fig3.savefig("trust.png", dpi=150)
         rospy.loginfo("Saved trust.png")
 
-        # Optionally show all figures interactively if a display is available
         try:
             plt.show()
         except Exception:
             pass
 
 
-# ---------------------------------------------------------------------------
 # Entry point
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
 
