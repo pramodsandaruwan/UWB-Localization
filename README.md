@@ -44,6 +44,7 @@ wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/inst
 ./install_geographiclib_datasets.sh
 
 ```
+
 ## Methodology
 ![Methodology](images/method.jpg)
 
@@ -59,4 +60,4 @@ wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/inst
 ## Experimental Results - Riga
 ![Riga Test](images/riga_test.jpg)
 
-![Riga Test Video](images/riga_test.mov)
+Test setup: [Real world test in Riga, Latvia](https://drive.google.com/file/d/1_wP7MhZwfbHMjNLN4W4QR421jS1OajCn/view?usp=drive_link)
