@@ -47,10 +47,14 @@ wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/inst
 ## Hardware
 
 ### 1. Mobile TAG unit with onboard processing
-![Tag](images/tag.jpg)
+<p align="center">
+  <img src="images/tag.jpg" width="400">
+</p>
 
 ### 2. Fixed Anchor 
-![Tag](images/anchor.jpg)
+<p align="center">
+  <img src="images/anchor.jpg" width="400">
+</p>
 
 ## Methodology
 ![Methodology](images/method.jpg)
