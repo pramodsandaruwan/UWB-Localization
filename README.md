@@ -58,3 +58,5 @@ wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/inst
 
 ## Experimental Results - Riga
 ![Riga Test](images/riga_test.jpg)
+
+![Riga Test Video](images/riga_test.mov)
