@@ -44,6 +44,13 @@ wget https://raw.githubusercontent.com/mavlink/mavros/master/mavros/scripts/inst
 ./install_geographiclib_datasets.sh
 
 ```
+## Hardware
+
+### 1. Mobile TAG unit with onboard processing
+![Tag](images/tag.jpg)
+
+### 2. Fixed Anchor 
+![Tag](images/anchor.jpg)
 
 ## Methodology
 ![Methodology](images/method.jpg)
