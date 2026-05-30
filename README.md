@@ -37,11 +37,6 @@ source devel/setup.bash
 
 Follow the official guide for Ubuntu system: [ROS Noetic - mavros](https://wiki.ros.org/mavros)
 
-Use apt-get for installation:
-```bash
-sudo apt-get install ros-kinetic-mavros ros-kinetic-mavros-extras
-```
-
 Install GeographicLib datasets by running the install_geographiclib_datasets.sh script:
 
 ```bash
