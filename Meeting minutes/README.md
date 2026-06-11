@@ -1,7 +1,7 @@
 # Professor Correspondence
 
 Email threads with Prof. Aleksandrs Grakovskis (TSI) regarding 
-MSc thesis (ST88711) and RaTSiF 2026.
+MSc thesis and RaTSiF 2026.
 
 | Thread | Period | Topic |
 |--------|--------|-------|
